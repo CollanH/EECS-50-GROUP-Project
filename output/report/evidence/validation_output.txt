@@ -1,0 +1,15 @@
+$ python3 -m unittest discover -s tests
+...........
+----------------------------------------------------------------------
+Ran 11 tests in 0.002s
+
+OK
+
+$ python3 demo.py --output /tmp/eecs50-report-demo-verified.png
+Favorable detection: estimate=120.00, status=ok, peaks=9
+Complete pulse misses: estimate=none, status=insufficient_peaks, peaks=0
+Same low rate, favorable alignment: estimate=60.00, status=ok, peaks=4
+Saved /tmp/eecs50-report-demo-verified.png
+
+$ python3 experiment.py --output /tmp/eecs50-report-experiment-verified.csv
+Wrote 1440 cases to /tmp/eecs50-report-experiment-verified.csv

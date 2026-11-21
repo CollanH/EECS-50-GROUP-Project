@@ -1,0 +1,268 @@
+Implement my part of an EECS 50 group project in:
+ /Users/coran/Desktop/EECS-50-GROUP-Project
+
+PROJECT CONTEXT
+
+Title: Effects of Sampling Rate on BPM Detection Accuracy.
+
+We are investigating how sampling frequency and sampling offset
+affect BPM estimation from simulated periodic beat signals.
+
+Team responsibilities:
+- Matthew Tao: generate the project’s rhythmic signals.
+- Me, Collan Stephen Harrington: sample signals and estimate BPM
+  using peak detection.
+- Zhengyuan Liu: compare estimates against ground truth, calculate
+  errors, produce analysis plots, and investigate optimization.
+
+Focus on completing my sampling and BPM detection components.
+Also build an independent test harness so I can validate my work
+before Matthew supplies his generator.
+
+Inspect the repository first. Some implementation may already exist.
+Compare existing code against this prompt, reuse what meets the
+requirements, and complete or fix only what is missing.
+Preserve existing teammate work.
+
+This prompt authorizes implementation and local verification.
+Do not stop after producing a plan. Do not create or update an
+AI-assistance document; I am maintaining that record myself.
+
+CODING STYLE
+
+For Python, follow the Google Python Style Guide:
+https://google.github.io/styleguide/pyguide.html
+
+- snake_case for functions, methods, variables, and module filenames.
+- PascalCase for classes.
+- ALL_CAPS for constants.
+- Four-space indentation.
+- Clear docstrings for public interfaces.
+- Short comments explaining intent or non-obvious behavior.
+- Validate inputs and raise useful exceptions for invalid arguments.
+- Send diagnostics to stderr.
+- Keep code understandable for an introductory signals and systems
+  course. Avoid unnecessary abstractions or dependencies.
+- Separate sampling, detection, and test-harness responsibilities
+  into focused modules.
+- Extract helpers when they are reused or make a component
+  independently testable.
+- Match existing teammate files when editing them.
+- Do not include AI co-author lines in commits.
+- Do not commit or push unless requested.
+
+EXPERIMENT PARAMETERS
+
+From the team proposal:
+- BPM: 60, 90, 120, 150.
+- Pulse width: 25, 50, 100 milliseconds.
+- Sampling frequency: 5, 10, 20, 50, 100, 200 Hz.
+- Test different sampling offsets.
+
+The proposal omits 50 Hz in one parameter list but includes it in
+the methods and my assigned responsibility. Include it.
+
+The following are proposed implementation defaults, not assignment
+requirements:
+- Observation duration: 30 seconds.
+- 20 offset fractions: k / 20 for k = 0,...,19.
+- offset_seconds = offset_fraction / sampling_frequency.
+Keep these settings configurable.
+
+SIGNAL INTERFACE
+
+Define a simple interface that accepts a one-dimensional NumPy
+array of times in seconds and returns a matching array of signal
+amplitudes.
+
+The sampler should accept this signal callable. It must not depend
+on the fake generator’s implementation.
+
+Matthew should eventually be able to supply a callable directly
+or through a small adapter without changing the BPM detector.
+
+If Matthew later supplies an array rather than a callable, explain
+what timestamps or original sampling rate are needed. Do not guess.
+
+MY SAMPLER
+
+Implement a function that:
+- Accepts the signal callable, sampling frequency, duration, and
+  offset in seconds.
+- Uses sample times:
+    t_n = offset_seconds + n / sampling_frequency
+- Includes only times in [0, duration).
+- For this experiment, validates:
+    sampling_frequency > 0
+    duration > 0
+    0 <= offset_seconds < 1 / sampling_frequency
+- Rejects non-finite parameters.
+- Constructs sample times from integer indices rather than
+  repeatedly adding a floating-point step.
+- Returns sample times and sampled amplitudes.
+- Validates the signal output’s shape and finite values.
+
+MY BPM DETECTOR
+
+Use scipy.signal.find_peaks as the baseline detector.
+
+The detector:
+- Receives sampled amplitudes and sampling frequency.
+- Does not receive true BPM, pulse width, beat times, or the
+  generator callable.
+- Finds peaks and converts peak indices to times relative to the
+  first sample, using peak_index / sampling_frequency.
+- For plots requiring absolute times, use the sampler's returned
+  timestamps, which include the sampling offset.
+- Estimates BPM using:
+    estimated_bpm = 60 / median(inter_peak_intervals_seconds)
+- Returns estimated BPM, peak indices, peak count, and status.
+- Reports insufficient_peaks with no numeric estimate when fewer
+  than two usable peaks are detected.
+- Distinguishes invalid input from a valid signal with insufficient
+  detected peaks.
+
+Explain and document:
+- Flat-top pulse handling.
+- Behavior at recording boundaries.
+- Any height, prominence, or distance settings.
+- Any conversion from seconds to samples.
+- Why a numeric estimate can still be incorrect when beats are missed.
+
+Keep detector parameters consistent across experimental cases.
+Do not tune them using each case’s true BPM.
+Do not automatically correct half-time or double-time estimates
+using ground truth.
+Keep the baseline simple before adding alternative algorithms.
+
+INDEPENDENT TEST HARNESS
+
+Create a clearly labeled synthetic reference generator for testing.
+It is a fixture, not a replacement for Matthew’s contribution.
+
+Use rectangular pulses with:
+- Configurable BPM.
+- Configurable pulse width in milliseconds.
+- Configurable first-beat time.
+- Baseline amplitude 0 and pulse amplitude 1.
+- Explicit half-open pulse intervals [start, start + width).
+- No noise in the baseline.
+
+Evaluate pulses directly at supplied times. Do not first generate a
+coarse array and interpolate it, since that could introduce a second
+source of sampling error.
+
+Keep ground-truth beat scheduling and expected values in the
+generator/test harness. Never pass them into the detector.
+
+Provide a single documented command that runs the test harness
+without Matthew's code, external audio files, or network access.
+
+Use deterministic tests with known expected behavior:
+
+1. Favorable sampling:
+   - Parameterized cases covering all proposed BPMs and pulse widths
+     at 200 Hz.
+   - Estimate should be within a documented numerical tolerance.
+   - Explain the tolerance rather than choosing it after seeing errors.
+
+2. Complete pulse misses:
+   - 60 BPM, 25 ms pulses starting at t=0.
+   - Sample at 5 Hz with offset 0.1 seconds.
+   - Samples should all be zero.
+   - Detector should return insufficient_peaks.
+
+3. Successful low-rate alignment:
+   - Use the same signal with a favorable sampling offset.
+   - Demonstrate that alignment can change the outcome.
+
+4. Plateau behavior:
+   - Multiple high samples within one pulse must not become multiple
+     detected beats.
+
+5. Insufficient information:
+   - All-zero signal.
+   - A recording with only one detectable pulse.
+
+6. Input validation:
+   - Nonpositive sampling frequency or duration.
+   - Invalid offset.
+   - Non-finite data and mismatched signal output shape.
+
+7. Recording boundaries:
+   - Explicitly verify and document how the detector handles pulses
+     touching the first or last sample.
+   - Do not silently count synthetic padded endpoints as observed beats.
+
+8. Integration:
+   - Verify that the sampler accepts an independently defined signal
+     callable without relying on reference-generator internals.
+
+Use meaningful tests, not tests that merely repeat implementation logic.
+Run the tests and fix failures.
+
+DEMO AND TEAM HANDOFF
+
+Provide a simple command-line demo that produces:
+- A favorable detection example.
+- The complete-miss example.
+- A plot of the reference waveform, sampled points, and detected peaks.
+- Clear labels for BPM, sampling rate, pulse width, and offset.
+- The estimated BPM and detector status.
+
+A dense reference curve is for visualization only. Detection must
+use only the actual sampled points.
+
+After the core components pass their tests, add a configurable
+experiment runner for:
+4 BPMs × 3 widths × 6 sampling rates × 20 offsets = 1,440 cases.
+
+Export a CSV containing:
+- true_bpm
+- pulse_width_ms
+- sampling_frequency_hz
+- duration_seconds
+- offset_fraction
+- offset_seconds
+- sample_count
+- peak_count
+- estimated_bpm
+- detector_status
+
+Leave estimated_bpm empty for insufficient_peaks.
+Preserve failed cases in the CSV.
+
+Treat this runner as support for Zhengyuan’s analysis. Do not expand
+into a full optimization study or take over his assigned work.
+
+DOCUMENTATION AND DELIVERY
+
+Provide:
+- Focused Python modules.
+- A dependency file.
+- Automated tests.
+- A README with exact setup, test, demo, and experiment commands.
+- A short integration example showing how to replace the fake
+  generator with Matthew’s callable.
+- Generated demo plots and the experiment CSV.
+- A concise explanation of what passed, what was observed, and
+  remaining limitations.
+
+Explain that this experiment studies idealized beat pulses.
+Do not generalize results to raw music audio or claim Nyquist alone
+guarantees reliable pulse detection.
+
+Document actual outcomes. Do not invent results or assume accuracy
+must improve monotonically with sampling rate.
+
+
+Implement and validate the sampler and detector first.
+Then finish the demo and experiment runner.
+Run the tests, demo, and full default experiment. Verify that the
+CSV has 1,440 data rows, excluding the header.
+In the final response, summarize changes, commands run, results,
+and any unresolved limitations.
+
+Technical references:
+https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.find_peaks.html
+https://numpy.org/doc/stable/reference/generated/numpy.arange.html
