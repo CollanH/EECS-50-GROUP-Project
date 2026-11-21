@@ -115,6 +115,34 @@ class SamplingDetectionTest(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertAlmostEqual(result.estimated_bpm, 30)
 
+    def test_aligned_150_bpm_pulses_are_not_lost_to_rounding(self):
+        # 150 BPM has a .4 s period, aligned with every other 5 Hz sample.
+        _, values = sample_signal(rectangular_pulses(150, 25), 5, 30)
+        np.testing.assert_array_equal(values[::2], np.ones(75))
+        np.testing.assert_array_equal(values[1::2], np.zeros(75))
+        result = estimate_bpm(values, 5)
+        self.assertEqual(result.peak_count, 74)
+        self.assertAlmostEqual(result.estimated_bpm, 150)
+
+    def test_repeated_pulse_starts_and_ends(self):
+        # Equivalent calculations must agree on inclusive starts and exclusive ends.
+        for bpm in (60, 90, 120, 150):
+            with self.subTest(bpm=bpm):
+                fixture = rectangular_pulses(bpm, 25, 0.125)
+                starts = 0.125 + np.arange(100) * 60 / bpm
+                np.testing.assert_array_equal(fixture(starts), np.ones(100))
+                np.testing.assert_array_equal(fixture(starts + 0.025), np.zeros(100))
+
+    def test_boundary_snapping_does_not_extend_pulses_by_a_sample(self):
+        fixture = rectangular_pulses(60, 25, 0.5)
+        # Adjacent floating-point numbers are ambiguous; a 1 ns gap is not.
+        times = [
+            0.5 - 1e-9, np.nextafter(0.5, -np.inf), 0.5,
+            0.525 - 1e-9, np.nextafter(0.525, -np.inf), 0.525,
+            0.525 + 1e-9,
+        ]
+        np.testing.assert_array_equal(fixture(times), [0, 1, 1, 1, 0, 0, 0])
+
 
 if __name__ == "__main__":
     unittest.main()

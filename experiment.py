@@ -4,6 +4,7 @@ import argparse
 import csv
 from pathlib import Path
 import sys
+import tempfile
 
 from detection import estimate_bpm
 from reference_signal import rectangular_pulses
@@ -26,6 +27,7 @@ def run_experiment(output: Path, bpms=DEFAULT_BPMS, widths=DEFAULT_WIDTHS_MS,
 
     Invalid configurations raise ValueError rather than masquerading as valid
     insufficient detections. All cases use the same detector settings.
+    An existing output is replaced only after the entire export succeeds.
     """
     if not isinstance(offset_count, int) or offset_count <= 0:
         raise ValueError("offset_count must be a positive integer")
@@ -34,27 +36,45 @@ def run_experiment(output: Path, bpms=DEFAULT_BPMS, widths=DEFAULT_WIDTHS_MS,
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     count = 0
-    with output.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=FIELD_NAMES)
-        writer.writeheader()
-        for bpm in bpms:
-            for width in widths:
-                fixture = rectangular_pulses(bpm, width)
-                for rate in rates:
-                    # Validate rate and duration before computing offset/rate.
-                    sample_signal(fixture, rate, duration)
-                    for k in range(offset_count):
-                        fraction = k / offset_count
-                        offset = fraction / rate
-                        times, values = sample_signal(
-                            fixture, rate, duration, offset)
-                        result = estimate_bpm(values, rate)
-                        writer.writerow(dict(zip(FIELD_NAMES, (
-                            bpm, width, rate, duration, fraction, offset,
-                            len(times), result.peak_count,
-                            result.estimated_bpm, result.status,
-                        ))))
-                        count += 1
+    temporary_path = None
+    try:
+        # Keep the previous CSV intact if validation or generation fails.
+        with tempfile.NamedTemporaryFile(
+            mode="w", newline="", encoding="utf-8", dir=output.parent,
+            prefix=f".{output.name}.", suffix=".tmp", delete=False,
+        ) as file:
+            temporary_path = Path(file.name)
+            writer = csv.DictWriter(file, fieldnames=FIELD_NAMES, lineterminator="\n")
+            writer.writeheader()
+            for bpm in bpms:
+                for width in widths:
+                    fixture = rectangular_pulses(bpm, width)
+                    for rate in rates:
+                        # Validate before dividing by the sampling rate.
+                        sample_signal(fixture, rate, duration)
+                        for k in range(offset_count):
+                            fraction = k / offset_count
+                            offset = fraction / rate
+                            times, values = sample_signal(
+                                fixture, rate, duration, offset)
+                            result = estimate_bpm(values, rate)
+                            writer.writerow({
+                                "true_bpm": bpm,
+                                "pulse_width_ms": width,
+                                "sampling_frequency_hz": rate,
+                                "duration_seconds": duration,
+                                "offset_fraction": fraction,
+                                "offset_seconds": offset,
+                                "sample_count": len(times),
+                                "peak_count": result.peak_count,
+                                "estimated_bpm": result.estimated_bpm,
+                                "detector_status": result.status,
+                            })
+                            count += 1
+        temporary_path.replace(output)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
     return count
 
 

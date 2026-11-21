@@ -1,156 +1,314 @@
 # Effects of Sampling Rate on BPM Detection Accuracy
 
-Collan Stephen Harrington's sampling and peak detection components for EECS 50.
-Matthew Tao owns the project rhythm generator. Zhengyuan Liu owns error analysis,
-plots comparing estimates to ground truth, and optimization. The reference pulse
-fixture here supports independent validation and is not Matthew's contribution.
+This project investigates how sampling frequency affects a peak-based BPM detector.
+It currently uses a fake rectangular-pulse signal so sampling and detection can be
+tested before the team generator is connected. It does not record a microphone or
+process a music file.
 
-## Setup and commands
+**Progress-report status:** sampling, detection, independent tests, and a demo are
+implemented. Team-generator integration and full accuracy analysis are future work.
 
-Use Python 3.10 or newer from this directory:
+## Start here
+
+```text
+Fake signal (later Matthew's generator)
+    -> sampler: timestamps and amplitudes
+    -> detector: peaks and estimated BPM
+```
+
+- **Collan:** sampling and BPM estimation, in `sampling.py` and `detection.py`.
+- **Matthew:** team signal generation. `reference_signal.py` is a test fixture.
+- **Zhengyuan:** error analysis, comparison plots, and optimization.
+
+## Download and setup
+
+Install Python 3.10 or newer. Clone the repo, or use GitHub's **Code -> Download
+ZIP**, extract it, and open that folder in VS Code. Select **Terminal -> New
+Terminal**. Commands must run from the folder containing `requirements.txt`.
+
+```sh
+git clone https://github.com/CollanH/EECS-50-GROUP-Project.git
+cd EECS-50-GROUP-Project
+```
+
+On macOS or Linux:
 
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
+```
+
+On Windows PowerShell:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+For subsequent commands, Windows users can replace `python` with
+`.\.venv\Scripts\python.exe`. Select the `.venv` Python interpreter in VS Code
+if prompted. The first install needs package-registry access; examples run offline
+after installation, without Matthew's code or external audio files.
+
+## Run one editable example
+
+```sh
+python example.py
+```
+
+Expected output with the unchanged settings:
+
+```text
+True BPM: 120
+Sampling frequency: 200 Hz
+Sample count: 1000
+First 5 sample times (seconds): [0.    0.005 0.01  0.015 0.02 ]
+First 5 amplitudes: [1. 1. 1. 1. 1.]
+Detected peaks: 9
+Estimated BPM: 120.0
+Status: ok
+```
+
+Edit the constants at the top of `example.py` to try other conditions. For an
+alignment comparison, use 60 BPM, 25 ms pulses, 5 Hz, and 5 seconds. Offset `0.0`
+gives 60 BPM and four peaks. Offset `0.1` gives `None`, zero peaks, and
+`insufficient_peaks`. At 5 Hz, measurements are 0.2 seconds apart.
+
+## Run the visual demo
+
+```sh
 python demo.py
+```
+
+Expected terminal output:
+
+```text
+Favorable detection: estimate=120.00, status=ok, peaks=9
+Complete pulse misses: estimate=none, status=insufficient_peaks, peaks=0
+Same low rate, favorable alignment: estimate=60.00, status=ok, peaks=4
+Saved results/demo.png
+```
+
+**Open `results/demo.png` in VS Code.** No graph window opens automatically.
+Gray curves show the reference signal, blue dots are measurements, and red crosses
+are detected peaks. The dense reference curve is only for visualization.
+
+```sh
+python demo.py --duration 8 --output results/eight_second_demo.png
+```
+
+This shows all eight seconds. Expected peak counts are 15, 0, and 7, with the same
+estimates and statuses as above. Boundary pulses are excluded by the detector.
+
+## Run the independent test harness
+
+```sh
+python -m unittest discover -s tests -v
+```
+
+Expected ending; execution time varies:
+
+```text
+Ran 18 tests in ...s
+
+OK
+```
+
+- `test_core.py` checks timestamps, pulse boundaries, known tempos, complete misses,
+  alignment, plateaus, recording boundaries, invalid inputs, and a separate callable.
+  Its favorable-grid test covers all 12 BPM/width pairs at 200 Hz with a conservative
+  4 BPM tolerance. This is a test tolerance, not an accuracy guarantee for the grid.
+- `test_experiment.py` checks CSV values, insufficient-detection rows, and protection
+  of previous files when validation or generation fails.
+
+## File guide
+
+| File | Purpose | How to use it |
+| --- | --- | --- |
+| `example.py` | One editable end-to-end case | Run it and change its constants |
+| `sampling.py` | Measure a supplied signal | Imported by other scripts |
+| `detection.py` | Estimate BPM from measurements | Imported by other scripts |
+| `reference_signal.py` | Generate fake pulses for testing | Imported by examples and tests |
+| `demo.py` | Run and plot three cases | Run it, then open the PNG |
+| `tests/test_core.py` | Validate generation, sampling, detection | Use the test command |
+| `tests/test_experiment.py` | Validate safe CSV export | Use the same test command |
+| `experiment.py` | Export cases for later analysis | Optional for the progress report |
+
+Running the sampler, detector, or generator module directly produces no output.
+They define functions. `example.py` and `demo.py` call those functions.
+
+## Function inputs and outputs
+
+### Reference generator
+
+```python
+signal = rectangular_pulses(bpm=120, pulse_width_ms=50)
+```
+
+Returns a **function**. Call `signal(times)` with a one-dimensional NumPy timestamp
+array in seconds to get matching amplitudes: 1 inside pulses, 0 between them.
+Optional `first_beat_seconds` defaults to zero. BPM must be positive and finite;
+pulse width must be positive, finite, and shorter than `60 / bpm` seconds.
+
+### Sampler
+
+```python
+times, amplitudes = sample_signal(signal, 200, 5, 0)
+```
+
+| Input | Meaning | Requirement |
+| --- | --- | --- |
+| `signal` | Function mapping times to amplitudes | Matching one-dimensional output |
+| `sampling_frequency` | Measurements per second, in Hz | Positive and finite |
+| `duration` | Recording length, in seconds | Positive and finite |
+| `offset_seconds` | Time of the first sample | `0 <= offset < 1 / sampling_frequency` |
+
+Returns matching arrays of **when** measurements happened and **what** was measured.
+Timestamps are `offset + n / sampling_frequency`, before the recording's end.
+An offset after the recording ends produces empty arrays.
+
+A predictable example, runnable in a Python file in the project folder:
+
+```python
+from sampling import sample_signal
+
+times, amplitudes = sample_signal(lambda times: 2 * times + 1, 4, 1, 0.125)
+print(times.tolist())       # [0.125, 0.375, 0.625, 0.875]
+print(amplitudes.tolist())  # [1.25, 1.75, 2.25, 2.75]
+```
+
+### Detector
+
+```python
+result = estimate_bpm(amplitudes, sampling_frequency=200)
+```
+
+Supply the same frequency used for sampling. The detector sees no true BPM or
+generator. It finds peaks, converts their positions to seconds, and calculates
+`60 / median(intervals_between_peaks)` with fixed default detection settings.
+
+| Result field | Meaning |
+| --- | --- |
+| `estimated_bpm` | Numeric estimate, or `None` when insufficient |
+| `peak_indices` | Positions of peaks in the amplitude array |
+| `peak_count` | Number of detected peaks |
+| `status` | `ok` or `insufficient_peaks` |
+| `peak_times_seconds` | Seconds from the first sample, excluding the offset |
+
+**`ok` means at least two peaks were found, not that the answer is correct.**
+Fewer than two peaks gives `insufficient_peaks`; invalid input raises an error.
+Flat pulses contribute one midpoint peak, rounded down for even-length plateaus.
+Peaks touching the first or last sample are excluded; no padding is added.
+For absolute peak times, use `times[result.peak_indices]`.
+
+```python
+from detection import estimate_bpm
+
+result = estimate_bpm([0, 1, 0, 1, 0], 2)
+# BPM: 60.0; peak indices: [1, 3]; peak count: 2
+# Status: 'ok'; peak times: [0.5, 1.5] seconds
+print(result)
+```
+
+## Connecting Matthew's generator
+
+Supply a function accepting a one-dimensional NumPy array of times **in seconds**
+and returning one finite amplitude per timestamp. It must handle an empty array.
+Replace the generator assignment in `example.py`; the sampler and detector stay
+the same. The reference fixture is not imported by either core module.
+
+If Matthew supplies recorded amplitudes instead, obtain timestamps or the original
+sampling frequency **and time origin** before writing an adapter. Agree on
+interpolation and out-of-range behavior rather than guessing them.
+
+## Optional experiment export
+
+Start with four easy-to-check cases:
+
+```sh
+python experiment.py --bpms 60 --widths-ms 25 --rates-hz 5 200 --duration 5 --offset-count 2 --output results/small_experiment.csv
+```
+
+Expected message: `Wrote 4 cases to results/small_experiment.csv`.
+
+| Rate Hz | Offset seconds | Samples | Peaks | Estimated BPM | Status |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 5 | 0 | 25 | 4 | 60 | ok |
+| 5 | 0.1 | 25 | 0 | blank | insufficient_peaks |
+| 200 | 0 | 1000 | 4 | 60 | ok |
+| 200 | 0.0025 | 1000 | 4 | 60 | ok |
+
+For the full grid:
+
+```sh
 python experiment.py
 ```
 
-Once dependencies are installed, tests, demo, and experiments run offline without
-external audio files or Matthew's code. The single independent harness command is
-`python -m unittest discover -s tests -v`.
+Expected message: `Wrote 1440 cases to results/experiment.csv`.
+This tests 4 BPMs (60, 90, 120, 150), 3 widths (25, 50, 100 ms), 6 rates
+(5, 10, 20, 50, 100, 200 Hz), and 20 offsets, using 30-second recordings.
+`offset_fraction = k / 20` and `offset_seconds = offset_fraction / sampling_frequency`.
+A fraction of 0.5 means half a sampling interval, **not** half a second.
 
-The demo writes `results/demo.png`. The default experiment writes
-`results/experiment.csv` with exactly 1,440 data rows plus a header:
-4 BPMs (60, 90, 120, 150) × 3 widths (25, 50, 100 ms) × 6 rates
-(5, 10, 20, **50**, 100, 200 Hz) × 20 offsets. Defaults are 30 seconds and
-fractions k/20 for k=0,...,19, with offset_seconds = fraction / rate.
-These duration and offset defaults are configurable implementation choices.
+| CSV field | Meaning |
+| --- | --- |
+| `true_bpm` | Known generator tempo for later comparison |
+| `pulse_width_ms` | Duration of one pulse, in milliseconds |
+| `sampling_frequency_hz` | Measurements per second |
+| `duration_seconds` | Recording length |
+| `offset_fraction` | Offset as a fraction of one sampling interval |
+| `offset_seconds` | Actual first-sample time |
+| `sample_count` | Number of measurements |
+| `peak_count` | Number of detected peaks |
+| `estimated_bpm` | Numeric estimate; blank when insufficient |
+| `detector_status` | `ok` or `insufficient_peaks` |
 
-```sh
-python demo.py --duration 8 --output results/custom_demo.png
-python experiment.py --bpms 60 120 --widths-ms 25 100 --rates-hz 5 50 200 \
-    --duration 10 --offset-count 10 --output results/custom_experiment.csv
-```
+Successful runs replace the selected output. Use a new `--output` name to keep
+older successful runs. Failed runs preserve the previous file: export uses a
+temporary file and replaces the destination only on success. Errors go to stderr
+and exit nonzero. Demo messages also go to stderr; VS Code displays these normally.
 
-Invalid CLI configurations produce diagnostics on stderr and exit nonzero.
-The CSV preserves every valid case, including insufficient detections, using:
-`true_bpm,pulse_width_ms,sampling_frequency_hz,duration_seconds,offset_fraction,offset_seconds,sample_count,peak_count,estimated_bpm,detector_status`.
-Insufficient detections have an empty estimate field. Invalid configurations raise
-an error instead of being labeled as insufficient observations.
+## Current evidence and numerical convention
 
-## Modules and team integration
+The fixture includes pulse starts and excludes pulse ends. Timestamps within four
+floating-point spacings of a boundary are treated as exactly on that boundary.
+This resolves rounding between equivalent time calculations; it does not extend
+pulses by a sampling interval. A one-nanosecond separation in the tested short
+recording remains distinct.
 
-- `sampling.py`: callable-based sampling, timestamps, and input validation.
-- `detection.py`: SciPy peak baseline and `DetectionResult`.
-- `reference_signal.py`: clearly labeled rectangular-pulse test fixture.
-- `tests/test_core.py`: deterministic independent harness.
-- `demo.py`: reference curve, actual observations, and observed peaks.
-- `experiment.py`: configurable CSV support for Zhengyuan's separate analysis.
+The original fixture sometimes missed aligned beat starts. The November 21 fix
+adds a regression case: 150 BPM, 25 ms, 5 Hz, 30 seconds, zero offset now produces
+75 high samples, 74 interior peaks, and approximately 150 BPM, correcting the old
+75 BPM artifact. The three default demo results are unchanged.
 
-Matthew can supply any callable that takes a one-dimensional NumPy time array
-in seconds and returns a matching finite amplitude array. For example:
+Regenerated November 21, 2026: all 18 tests pass. The full CSV has 1,440 cases,
+1,205 numeric estimates, and 235 insufficient detections. These are output counts,
+not a completed accuracy analysis. Correcting boundary classification changes some
+cases without changing the sampler or detection algorithm.
 
-```python
-import numpy as np
-from sampling import sample_signal
-from detection import estimate_bpm
+**`output/report/` is the November 19 historical report and evidence.** Its old
+counts and unresolved-issue wording do not describe the current code. See its
+README. Use root source files and `results/` for current work.
 
-# Independent callable example; replace this with Matthew's signal or adapter.
-def matthew_signal(times):
-    return np.cos(2 * np.pi * times)
+## Progress report scope
 
-times, amplitudes = sample_signal(matthew_signal, 100, 30, 0.002)
-result = estimate_bpm(amplitudes, 100)
-absolute_peak_times = times[result.peak_indices]
-print(result.estimated_bpm, result.status)
-```
+- **Section 3:** sampler, detector, units, parameters, fixed settings, independent
+  harness, and important code snapshots.
+- **Section 4:** the three demo outcomes and successful tests. Broader CSV error
+  analysis can follow team integration.
+- **Section 5:** pending integration, noise testing, and broader analysis.
+- Include actual prompts, AI assistance, revisions, and personal learning. Update
+  the historical report for these fixes and the model actually used.
 
-The cosine above demonstrates integration only. The pulse fixture is not imported
-by the sampler or detector. If Matthew provides only amplitude samples, obtain
-matching timestamps, or the original sampling rate **and time origin**, before
-building an adapter. Agree on interpolation and out-of-range behavior explicitly;
-do not infer timestamps or silently introduce another sampling step.
+The proposal specifies the BPMs, widths, and rates. The duration and offset grid
+are implementation choices. This studies idealized pulses, not raw music audio.
+Keep the detector fixed while comparing sampling conditions; final optimization
+and claims of a best rate are outside the current progress-report results.
 
-## Sampling and detector conventions
+## References
 
-Sampling uses `offset_seconds + integer_index / sampling_frequency` and retains
-only timestamps in [0, duration). The frequency and duration must be positive
-and finite; the offset must be finite and satisfy 0 <= offset < 1/frequency.
-Empty samples are possible when the recording ends before the first sample.
-Signal output must match the timestamp array shape and contain finite values.
-Integer indices avoid accumulating a floating-point step.
-
-The detector accepts only sampled amplitudes and frequency. It never sees BPM,
-pulse width, beat times, offsets, or a generator. It calls `scipy.signal.find_peaks`
-with default settings: no height, prominence, distance, or width restrictions.
-Settings are consistent for every case; no ground-truth tuning or half/double-time
-correction is applied. No time threshold needs conversion to samples.
-
-A flat top produces a single midpoint peak (rounded down for an even number of
-samples). Peaks need lower neighbors on both sides. A high pulse touching the
-first or last sample is excluded, including a plateau touching an endpoint.
-No synthetic padding is added and no endpoint is counted as an observed beat.
-
-Peak times returned by the detector are `peak_index / frequency`, relative to
-the first sample. Absolute plot locations use `times[peak_indices]`, including
-the sampling offset. With two or more peaks, BPM = 60 / median(diff(peak_times)).
-Fewer than two peaks returns status `insufficient_peaks` and estimate `None`.
-Invalid input raises an exception. Status `ok` means enough peaks were found;
-it does not guarantee the right BPM. Missing alternate beats can produce a
-half-time estimate, and noise could add spurious peaks with this simple baseline.
-
-The fixture evaluates unit rectangular pulses directly at supplied times,
-with baseline zero and half-open intervals [start, start + width). Beat k starts
-at first_beat_seconds + k × (60/BPM), k >= 0. First-beat time is configurable.
-There is no coarse waveform interpolation or noise. Boundary comparisons use
-ordinary floating-point arithmetic without expanding intervals by a tolerance;
-values extremely close to mathematical boundaries may depend on representation.
-
-## Validation and actual observations
-
-Validated November 17, 2026 with Python 3, NumPy 2.4.0, SciPy 1.17.0, and
-Matplotlib 3.10.8. All 11 test methods passed, including parameterized coverage of
-all 12 BPM/width combinations at 200 Hz, complete misses versus aligned low-rate
-sampling, flat tops, zero/one-peak recordings, boundaries, invalid inputs,
-half-open pulse intervals, and an independently defined callable.
-
-The favorable-grid tolerance is 4 BPM. Before examining errors, a conservative
-2-sample-period bound on midpoint interval quantization gives at 200 Hz and the
-shortest period (0.4 s): 60/(0.4 - 2/200) - 150 < 3.85 BPM. Four BPM rounds that
-bound upward; it applies to favorable detection with all interior pulses sampled,
-not to missed pulses or arbitrary signals.
-
-The generated five-second demo gives:
-
-| Case | Estimate | Peaks | Status |
-| --- | ---: | ---: | --- |
-| 120 BPM, 50 ms, 200 Hz, offset 0 s | 120 BPM | 9 | ok |
-| 60 BPM, 25 ms, 5 Hz, offset 0.1 s | empty | 0 | insufficient_peaks |
-| Same low-rate signal, offset 0 s | 60 BPM | 4 | ok |
-
-The full default CSV contains 1,440 data rows: 1,211 `ok` and 229
-`insufficient_peaks`. Verified empty estimate fields for every insufficient case.
-
-| Sampling rate (Hz) | Numeric estimates | Insufficient | Largest absolute error among numeric estimates (BPM) |
-| ---: | ---: | ---: | ---: |
-| 5 | 118 | 122 | 75.0000 |
-| 10 | 162 | 78 | 75.0000 |
-| 20 | 211 | 29 | 75.0000 |
-| 50 | 240 | 0 | 0.9091 |
-| 100 | 240 | 0 | 0.4478 |
-| 200 | 240 | 0 | 0.2256 |
-
-These observations describe this grid only; they do not establish monotonic
-accuracy for every offset or waveform. The experiment studies idealized beat
-pulses, not raw music audio. Rectangular pulses are not band-limited, and Nyquist
-alone does not guarantee reliable pulse detection. Noise robustness, complex
-rhythms, audio onset detection, and optimization remain outside this baseline.
-
-## Technical references
-
-- [SciPy find_peaks](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.find_peaks.html): local maxima, flat tops, and detector options.
-- [NumPy arange](https://numpy.org/doc/stable/reference/generated/numpy.arange.html): integer-index arrays and floating-step caveats.
-- [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html): Python naming, docstrings, and code conventions.
+- [SciPy find_peaks](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.find_peaks.html): detection and plateau conventions.
+- [NumPy arange](https://numpy.org/doc/stable/reference/generated/numpy.arange.html): index arrays and floating-step caveats.
+- [NumPy median](https://numpy.org/doc/stable/reference/generated/numpy.median.html): interval summary.
+- [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html): naming and formatting reference.

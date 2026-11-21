@@ -14,8 +14,9 @@ def rectangular_pulses(
     """Return noise-free unit pulses on [beat_start, beat_start + width).
 
     Beat k starts at first_beat_seconds + k * (60 / bpm), for k >= 0.
-    Direct comparisons use floating-point beat starts, with no interpolation
-    or tolerance expansion of pulse intervals. Width must be less than a period.
+    Times within four floating-point spacings of a boundary are treated as
+    that boundary: starts are included and ends are excluded. This resolves
+    rounding between equivalent time calculations. Width must be less than a period.
     """
     if not math.isfinite(bpm) or bpm <= 0:
         raise ValueError("bpm must be positive and finite")
@@ -33,12 +34,24 @@ def rectangular_pulses(
             raise ValueError("times must be a finite one-dimensional array")
         beat_index = np.floor((times - first_beat_seconds) / period)
         high = np.zeros(times.shape, dtype=bool)
-        # Adjacent candidates resolve floating division rounding at beat starts.
+        # Check adjacent beats because division can round across a beat index.
         for shift in (-1, 0, 1):
             candidate = beat_index + shift
             start = first_beat_seconds + candidate * period
-            high |= ((candidate >= 0) & (times >= start)
-                     & (times < start + width))
+            end = start + width
+
+            # Snap only rounding-sized differences, not a fraction of a sample.
+            time_scale = np.maximum(1.0, np.maximum(np.abs(start), np.abs(end)))
+            time_scale = np.maximum(time_scale, np.abs(times))
+            boundary_tolerance = 4 * np.spacing(time_scale)
+            at_start = np.abs(times - start) <= boundary_tolerance
+            at_end = np.abs(times - end) <= boundary_tolerance
+            high |= (
+                (candidate >= 0)
+                & ((times >= start) | at_start)
+                & (times < end)
+                & ~at_end
+            )
         return high.astype(float)
 
     return evaluate

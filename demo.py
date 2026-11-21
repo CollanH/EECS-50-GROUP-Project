@@ -45,7 +45,8 @@ def make_demo(output: Path, duration: float = 5.0):
               f"peaks={result.peak_count}", file=sys.stderr)
     axes[0].legend(loc="upper right", fontsize=8)
     axes[-1].set_xlabel("Absolute time (seconds, including sampling offset)")
-    axes[-1].set_xlim(0, min(duration, 5))
+    # Show the full recording so the displayed peaks match the reported count.
+    axes[-1].set_xlim(0, duration)
     figure.tight_layout()
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
