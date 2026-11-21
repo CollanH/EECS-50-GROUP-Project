@@ -18,33 +18,48 @@ class DetectionResult:
     peak_times_seconds: np.ndarray
 
 
-def estimate_bpm(amplitudes: np.ndarray,
-                 sampling_frequency: float) -> DetectionResult:
-    """Estimate BPM as 60 / median interval between interior local peaks.
-
-    Flat plateaus produce one peak at their midpoint, rounded down. Endpoint
-    plateaus are excluded because both surrounding lower samples are needed.
-    No padding, height, prominence, distance, or width filters are used. Thus no
-    seconds-to-samples threshold conversion is needed. These settings remain
-    identical for every experiment. Missed beats can yield a numeric but wrong
-    estimate; status 'ok' indicates enough peaks, not guaranteed accuracy.
-
-    Args:
-        amplitudes: Finite 1-D sampled values; an empty array is valid.
-        sampling_frequency: Positive finite samples per second.
-
-    Raises:
-        ValueError: Data or sampling frequency is invalid.
-    """
+# Units: sampling_frequency is in Hz; estimated BPM is in beats per minute.
+def estimate_bpm(
+    amplitudes: np.ndarray,
+    sampling_frequency: float,
+) -> DetectionResult:
+    """Estimate BPM from the median time between detected peaks."""
+    # Check the sampling rate before converting sample positions to seconds.
     if not math.isfinite(sampling_frequency) or sampling_frequency <= 0:
         raise ValueError("sampling_frequency must be positive and finite")
-    values = np.asarray(amplitudes, dtype=float)
-    if values.ndim != 1 or not np.all(np.isfinite(values)):
+
+    # Check that the measurements form one array of finite amplitudes.
+    sample_values = np.asarray(amplitudes, dtype=float)
+    if sample_values.ndim != 1 or not np.all(np.isfinite(sample_values)):
         raise ValueError("amplitudes must be a finite one-dimensional array")
-    peaks, _ = signal.find_peaks(values)
-    peak_times = peaks / sampling_frequency
-    if len(peaks) < 2:
-        return DetectionResult(None, peaks, len(peaks), "insufficient_peaks",
-                               peak_times)
-    bpm = float(60 / np.median(np.diff(peak_times)))
-    return DetectionResult(bpm, peaks, len(peaks), "ok", peak_times)
+
+    # Use the same unfiltered detector for every case. Flat peaks count once;
+    # their midpoint is rounded down, and endpoint peaks are excluded.
+    peak_indices, _ = signal.find_peaks(sample_values)
+
+    # Convert peak positions to seconds relative to the first sample.
+    peak_times_seconds = peak_indices / sampling_frequency
+    peak_count = len(peak_indices)
+
+    # At least two peaks are needed to measure a time interval.
+    if peak_count < 2:
+        return DetectionResult(
+            estimated_bpm=None,
+            peak_indices=peak_indices,
+            peak_count=peak_count,
+            status="insufficient_peaks",
+            peak_times_seconds=peak_times_seconds,
+        )
+
+    # Convert the median interval in seconds to beats per minute.
+    peak_intervals_seconds = np.diff(peak_times_seconds)
+    estimated_bpm = float(60 / np.median(peak_intervals_seconds))
+
+    # 'ok' means enough peaks were found; missed beats can still bias the BPM.
+    return DetectionResult(
+        estimated_bpm=estimated_bpm,
+        peak_indices=peak_indices,
+        peak_count=peak_count,
+        status="ok",
+        peak_times_seconds=peak_times_seconds,
+    )
